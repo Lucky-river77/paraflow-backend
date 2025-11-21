@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  // CORSヘッダーを設定
+  // CORSヘッダー
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -13,66 +13,73 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { audio } = req.body;
+    const { audio, mimeType } = req.body;
     
     if (!audio) {
+      console.error('No audio data in request body');
       return res.status(400).json({ error: 'No audio data provided' });
     }
     
-    console.log('Received audio data, length:', audio.length);
+    console.log('=== Transcription Request ===');
+    console.log('Audio data length:', audio.length);
+    console.log('MIME type:', mimeType);
     
     // Base64からバイナリに変換
-    const audioBuffer = Buffer.from(audio, 'base64');
+    let audioBuffer;
+    try {
+      audioBuffer = Buffer.from(audio, 'base64');
+    } catch (e) {
+      console.error('Base64 decode error:', e);
+      return res.status(400).json({ error: 'Invalid base64 audio data' });
+    }
+    
     console.log('Audio buffer size:', audioBuffer.length, 'bytes');
     
-    // ファイルサイズチェック（25MB制限）
-    if (audioBuffer.length > 25 * 1024 * 1024) {
-      return res.status(400).json({ error: 'Audio file too large (max 25MB)' });
+    if (audioBuffer.length < 100) {
+      return res.status(400).json({ error: 'Audio data too small' });
     }
+    
+    // ファイル形式を決定
+    let extension = 'webm';
+    let contentType = 'audio/webm';
+    
+    if (mimeType) {
+      if (mimeType.includes('mp4')) {
+        extension = 'mp4';
+        contentType = 'audio/mp4';
+      } else if (mimeType.includes('mpeg')) {
+        extension = 'mp3';
+        contentType = 'audio/mpeg';
+      } else if (mimeType.includes('ogg')) {
+        extension = 'ogg';
+        contentType = 'audio/ogg';
+      }
+    }
+    
+    console.log('Using format:', extension, contentType);
 
-    // バウンダリ文字列を生成
-    const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+    // FormDataライブラリを使用
+    const FormData = require('form-data');
+    const formData = new FormData();
     
-    // multipart/form-dataを手動で構築
-    const parts = [];
-    
-    // fileフィールド
-    parts.push(`--${boundary}\r\n`);
-    parts.push(`Content-Disposition: form-data; name="file"; filename="audio.webm"\r\n`);
-    parts.push(`Content-Type: audio/webm\r\n\r\n`);
-    parts.push(audioBuffer);
-    parts.push('\r\n');
-    
-    // modelフィールド
-    parts.push(`--${boundary}\r\n`);
-    parts.push(`Content-Disposition: form-data; name="model"\r\n\r\n`);
-    parts.push('whisper-1\r\n');
-    
-    // languageフィールド
-    parts.push(`--${boundary}\r\n`);
-    parts.push(`Content-Disposition: form-data; name="language"\r\n\r\n`);
-    parts.push('en\r\n');
-    
-    // 終端
-    parts.push(`--${boundary}--\r\n`);
-    
-    // Bufferに結合
-    const buffers = parts.map(part => 
-      typeof part === 'string' ? Buffer.from(part, 'utf8') : part
-    );
-    const body = Buffer.concat(buffers);
+    // ファイルを追加
+    formData.append('file', audioBuffer, {
+      filename: `audio.${extension}`,
+      contentType: contentType
+    });
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'en');
 
     console.log('Calling OpenAI Whisper API...');
-    console.log('Body size:', body.length, 'bytes');
 
-    // OpenAI Whisper APIを呼び出し
+    // OpenAI API呼び出し
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': `multipart/form-data; boundary=${boundary}`
+        ...formData.getHeaders()
       },
-      body: body
+      body: formData
     });
 
     console.log('OpenAI response status:', response.status);
@@ -88,7 +95,7 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json();
-    console.log('Transcription successful:', data.text);
+    console.log('Transcription successful, text length:', data.text.length);
     
     return res.status(200).json({ 
       text: data.text,
@@ -100,7 +107,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ 
       error: 'Transcription failed',
       message: error.message,
-      stack: error.stack
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 }
