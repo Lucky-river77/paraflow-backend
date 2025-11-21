@@ -13,40 +13,65 @@ export default async function handler(req, res) {
   }
 
   try {
-    // フロントエンドからBase64で送られてくる
     const { audio, mimeType } = req.body;
     
     if (!audio) {
-      return res.status(400).json({ error: 'No audio data', success: false });
+      return res.status(400).json({ error: 'No audio data provided', success: false });
     }
 
-    console.log('Audio data length:', audio.length);
+    console.log('Audio data received, length:', audio.length);
     
     // Base64をBufferに変換
     const audioBuffer = Buffer.from(audio, 'base64');
     console.log('Buffer size:', audioBuffer.length, 'bytes');
 
-    // FormDataを作成
-    const FormData = require('form-data');
-    const formData = new FormData();
-    
-    formData.append('file', audioBuffer, {
-      filename: 'audio.webm',
-      contentType: mimeType || 'audio/webm'
-    });
-    formData.append('model', 'whisper-1');
-    formData.append('language', 'en');
+    if (audioBuffer.length < 100) {
+      return res.status(400).json({ error: 'Audio too short', success: false });
+    }
 
+    // バウンダリを生成
+    const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+    
+    // multipart/form-dataを手動で構築
+    const parts = [];
+    
+    // fileフィールド
+    parts.push(`--${boundary}\r\n`);
+    parts.push(`Content-Disposition: form-data; name="file"; filename="audio.webm"\r\n`);
+    parts.push(`Content-Type: ${mimeType || 'audio/webm'}\r\n\r\n`);
+    parts.push(audioBuffer);
+    parts.push(`\r\n`);
+    
+    // modelフィールド
+    parts.push(`--${boundary}\r\n`);
+    parts.push(`Content-Disposition: form-data; name="model"\r\n\r\n`);
+    parts.push(`whisper-1\r\n`);
+    
+    // languageフィールド
+    parts.push(`--${boundary}\r\n`);
+    parts.push(`Content-Disposition: form-data; name="language"\r\n\r\n`);
+    parts.push(`en\r\n`);
+    
+    // 終端
+    parts.push(`--${boundary}--\r\n`);
+    
+    // Bufferに結合
+    const buffers = parts.map(part => 
+      typeof part === 'string' ? Buffer.from(part, 'utf8') : part
+    );
+    const body = Buffer.concat(buffers);
+
+    console.log('Body size:', body.length, 'bytes');
     console.log('Calling OpenAI API...');
 
-    // OpenAI APIを呼び出し
+    // OpenAI API呼び出し
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        ...formData.getHeaders()
+        'Content-Type': `multipart/form-data; boundary=${boundary}`
       },
-      body: formData
+      body: body
     });
 
     console.log('OpenAI response status:', response.status);
@@ -62,7 +87,7 @@ export default async function handler(req, res) {
     }
 
     const result = await response.json();
-    console.log('Transcription success');
+    console.log('Transcription successful, text:', result.text);
     
     return res.status(200).json({ 
       text: result.text,
@@ -70,9 +95,9 @@ export default async function handler(req, res) {
     });
     
   } catch (error) {
-    console.error('Server error:', error);
+    console.error('Error:', error.message);
     return res.status(500).json({ 
-      error: 'Transcription failed',
+      error: 'Server error',
       message: error.message,
       success: false
     });
