@@ -25,7 +25,7 @@ export default async function handler(req, res) {
     // FormDataを作成
     const FormData = require('form-data');
     const formData = new FormData();
-    formData.append('audio_file', audioBuffer, {
+    formData.append('file', audioBuffer, {
       filename: 'audio.webm',
       contentType: 'audio/webm'
     });
