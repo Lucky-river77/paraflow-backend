@@ -13,17 +13,55 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { audio, mimeType } = req.body;
-    
-    if (!audio) {
-      return res.status(400).json({ error: 'No audio data provided', success: false });
-    }
+    let audioBuffer;
+    let mimeType = 'audio/webm';
 
-    console.log('Audio data received, length:', audio.length);
-    
-    // Base64をBufferに変換
-    const audioBuffer = Buffer.from(audio, 'base64');
-    console.log('Buffer size:', audioBuffer.length, 'bytes');
+    // Content-Typeを確認して処理を分岐
+    const contentType = req.headers['content-type'] || '';
+
+    if (contentType.includes('multipart/form-data')) {
+      // ====================================
+      // パターン1: FormData形式（paraflow.html用）
+      // ====================================
+      console.log('FormData形式で受信');
+      
+      // multerの代わりに手動でparseする必要があるが、
+      // Vercelではmulterが使えないので、busboy等を使用
+      // 簡易的にはreq.bodyからバイナリを取得
+      
+      // Vercelではファイルアップロードは難しいので、
+      // paraflow.htmlをBase64送信に変更する方が簡単
+      return res.status(400).json({ 
+        error: 'FormData upload is not supported. Please use Base64 encoding.',
+        success: false 
+      });
+
+    } else if (contentType.includes('application/json')) {
+      // ====================================
+      // パターン2: JSON + Base64形式（q1.html用）
+      // ====================================
+      console.log('JSON + Base64形式で受信');
+      
+      const { audio, mimeType: requestMimeType } = req.body;
+      
+      if (!audio) {
+        return res.status(400).json({ error: 'No audio data provided', success: false });
+      }
+
+      if (requestMimeType) {
+        mimeType = requestMimeType;
+      }
+
+      // Base64をBufferに変換
+      audioBuffer = Buffer.from(audio, 'base64');
+      console.log('Audio buffer size:', audioBuffer.length, 'bytes');
+
+    } else {
+      return res.status(400).json({ 
+        error: 'Unsupported Content-Type',
+        success: false 
+      });
+    }
 
     if (audioBuffer.length < 100) {
       return res.status(400).json({ error: 'Audio too short', success: false });
@@ -35,24 +73,20 @@ export default async function handler(req, res) {
     // multipart/form-dataを手動で構築
     const parts = [];
     
-    // fileフィールド
     parts.push(`--${boundary}\r\n`);
     parts.push(`Content-Disposition: form-data; name="file"; filename="audio.webm"\r\n`);
-    parts.push(`Content-Type: ${mimeType || 'audio/webm'}\r\n\r\n`);
+    parts.push(`Content-Type: ${mimeType}\r\n\r\n`);
     parts.push(audioBuffer);
     parts.push(`\r\n`);
     
-    // modelフィールド
     parts.push(`--${boundary}\r\n`);
     parts.push(`Content-Disposition: form-data; name="model"\r\n\r\n`);
     parts.push(`whisper-1\r\n`);
     
-    // languageフィールド
     parts.push(`--${boundary}\r\n`);
     parts.push(`Content-Disposition: form-data; name="language"\r\n\r\n`);
     parts.push(`en\r\n`);
     
-    // 終端
     parts.push(`--${boundary}--\r\n`);
     
     // Bufferに結合
@@ -61,7 +95,6 @@ export default async function handler(req, res) {
     );
     const body = Buffer.concat(buffers);
 
-    console.log('Body size:', body.length, 'bytes');
     console.log('Calling OpenAI API...');
 
     // OpenAI API呼び出し
@@ -87,7 +120,7 @@ export default async function handler(req, res) {
     }
 
     const result = await response.json();
-    console.log('Transcription successful, text:', result.text);
+    console.log('Transcription successful');
     
     return res.status(200).json({ 
       text: result.text,
